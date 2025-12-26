@@ -48,13 +48,11 @@ func (s *Storage) InitDB() error {
 				tier INTEGER,
 				time REAL,
 				runner TEXT,
-				sourcejump_id INTEGER
+				sourcejump_id INTEGER,
 				tas_time REAL,
 				runner_tas TEXT,
 				server_id INTEGER,
 				tas_server_id INTEGER,
-				youtube_link TEXT,
-				youtube_tas_link TEXT,
 				fastdl_hash TEXT,
 				FOREIGN KEY(server_id) REFERENCES server(id),
 				FOREIGN KEY(tas_server_id) REFERENCES server(id)
@@ -74,9 +72,9 @@ func (s *Storage) InitDB() error {
 func (s *Storage) GetFullMapDetails(mapName string) (*BhopMap, string, string, error) {
 	query := `
 		SELECT
-			m.id, m.name, m.tier, m.time, m.runner,
-			m.tas_time, m.runner_tas, m.fastdl_hash,
-			s1.name, s2.name
+			m.id, m.name, m.tier, m.time,
+			m.runner, m.tas_time, m.runner_tas,
+			m.fastdl_hash, s1.name, s2.name
 		FROM bhop_map m
 		LEFT JOIN server s1 ON m.server_id = s1.id
 		LEFT JOIN server s2 ON m.tas_server_id = s2.id
@@ -88,8 +86,7 @@ func (s *Storage) GetFullMapDetails(mapName string) (*BhopMap, string, string, e
 
 	err := s.db.QueryRow(query, mapName).Scan(
 		&m.ID, &m.Name, &m.Tier, &m.Time, &m.Runner,
-		&m.TASTime, &m.RunnerTAS, &m.FastDLHash,
-		&wrServerName, &tasServerName,
+		&m.TASTime, &m.RunnerTAS, &m.FastDLHash, &wrServerName, &tasServerName,
 	)
 
 	if err == sql.ErrNoRows {
@@ -102,7 +99,7 @@ func (s *Storage) GetFullMapDetails(mapName string) (*BhopMap, string, string, e
 	return &m, wrServerName.String, tasServerName.String, nil
 }
 
-func (s *Storage) UpdateMapFromBackfill(r RecordMapEntry) error {
+func (s *Storage) SaveMapWR(r *RecordMapEntry) error {
 	serverID, err := s.GetOrCreateServer(r.Hostname)
 	if err != nil {
 		return err
@@ -119,11 +116,12 @@ func (s *Storage) UpdateMapFromBackfill(r RecordMapEntry) error {
 			WHERE name = ?
 	`
 	_, err = s.db.Exec(query, r.TimeSeconds, r.Name, r.Tier, serverIDArg, r.ID, r.Map)
+
 	return err
 }
 
 func (s *Storage) CreateMap(r RecordDetail, fastDLHash string) error {
-	timeVal := ParseTime(r.Time)
+	time := ParseTime(r.Time)
 	serverID, err := s.GetOrCreateServer(r.Hostname)
 	if err != nil {
 		return err
@@ -138,7 +136,8 @@ func (s *Storage) CreateMap(r RecordDetail, fastDLHash string) error {
 		INSERT INTO bhop_map (name, tier, time, runner, server_id, fastdl_hash)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`
-	_, err = s.db.Exec(query, r.Map, r.Tier, timeVal, r.Name, serverIDArg, fastDLHash)
+	_, err = s.db.Exec(query, r.Map, r.Tier, time, r.Name, serverIDArg, fastDLHash)
+
 	return err
 }
 
@@ -158,12 +157,13 @@ func (s *Storage) GetMapState(mapName string) (int64, int, error) {
 	if recordID.Valid {
 		return id, int(recordID.Int64), nil
 	}
+
 	return id, 0, nil
 }
 
-func (s *Storage) SearchMaps(query string) ([]string, error) {
+func (s *Storage) SearchMaps(query string, limit int) ([]string, error) {
 	searchTerm := "%" + strings.TrimSpace(query) + "%"
-	rows, err := s.db.Query("SELECT name FROM bhop_map WHERE name LIKE ? LIMIT 50", searchTerm)
+	rows, err := s.db.Query("SELECT name FROM bhop_map WHERE name LIKE ? LIMIT ?", searchTerm, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -175,6 +175,7 @@ func (s *Storage) SearchMaps(query string) ([]string, error) {
 		rows.Scan(&name)
 		maps = append(maps, name)
 	}
+
 	return maps, nil
 }
 
@@ -192,11 +193,12 @@ func (s *Storage) UpdateTASRecord(mapName string, time float64, runner string, s
 
 	query := `UPDATE bhop_map SET tas_time = ?, runner_tas = ?, tas_server_id = ? WHERE name = ?`
 	_, err = s.db.Exec(query, time, runner, serverIDArg, mapName)
+
 	return err
 }
 
 func (s *Storage) UpdateMapRecord(mapID int64, r RecordDetail) error {
-	timeVal := ParseTime(r.Time)
+	time := ParseTime(r.Time)
 	serverID, err := s.GetOrCreateServer(r.Hostname)
 	if err != nil {
 		return err
@@ -207,9 +209,9 @@ func (s *Storage) UpdateMapRecord(mapID int64, r RecordDetail) error {
 		serverIDArg = nil
 	}
 
-	// Added latest_record_id = ?
 	query := `UPDATE bhop_map SET time = ?, runner = ?, server_id = ?, sourcejump_id = ? WHERE id = ?`
-	_, err = s.db.Exec(query, timeVal, r.Name, serverIDArg, r.ID, mapID)
+	_, err = s.db.Exec(query, time, r.Name, serverIDArg, r.ID, mapID)
+
 	return err
 }
 
@@ -231,5 +233,6 @@ func (s *Storage) GetOrCreateServer(name string) (int64, error) {
 	}
 
 	err = s.db.QueryRow("SELECT id FROM server WHERE name = ?", name).Scan(&id)
+
 	return id, err
 }

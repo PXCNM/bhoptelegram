@@ -18,6 +18,7 @@ const (
 
 	FURLRecordsID  = "https://www.sourcejump.net/ajax/records/id/%d"
 	FURLRecordsMap = "https://www.sourcejump.net/ajax/records/map/%s"
+	FURLSheet      = "https://docs.google.com/spreadsheets/d/%s/export?format=csv&gid=%s"
 
 	SheetID  = "1D02pV-VWrJK8M_GVpk434YvfEZbkfUIplEQlOlq0rTc"
 	SheetGID = "1663410541"
@@ -34,11 +35,12 @@ func FetchRecentRecords() ([]RecordListEntry, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&recentRecords); err != nil {
 		return nil, err
 	}
+
 	return recentRecords, nil
 }
 
-func SyncTASData(store *Storage) error {
-	url := fmt.Sprintf("https://docs.google.com/spreadsheets/d/%s/export?format=csv&gid=%s", SheetID, SheetGID)
+func SyncTASData(storage *Storage) error {
+	url := fmt.Sprintf(FURLSheet, SheetID, SheetGID)
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -72,13 +74,15 @@ func SyncTASData(store *Storage) error {
 			continue
 		}
 
-		if err := store.UpdateTASRecord(mapName, tasTime, runner, server); err != nil {
+		if err := storage.UpdateTASRecord(mapName, tasTime, runner, server); err != nil {
+			log.Println("Couldn't update tas record: ", err)
 		}
 	}
+
 	return nil
 }
 
-func FetchMapWRs(mapName string) ([]RecordMapEntry, error) {
+func FetchMapWR(mapName string) (*RecordMapEntry, error) {
 	safeMapName := url.PathEscape(mapName)
 	url := fmt.Sprintf(FURLRecordsMap, safeMapName)
 
@@ -92,7 +96,7 @@ func FetchMapWRs(mapName string) ([]RecordMapEntry, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&records); err != nil {
 		return nil, err
 	}
-	return records, nil
+	return &records[0], nil
 }
 
 func FetchRecordDetail(recordID int) (*RecordDetail, error) {
@@ -122,11 +126,8 @@ func GetFastDLHash(mapName string) (string, error) {
 	}
 	htmlContent := string(bodyBytes)
 
-	// Regex explanation:
-	// 1. We look for a table cell <td> containing an anchor <a> with the map name.
-	// 2. We handle potential whitespace (\s*).
-	// 3. We look for the immediate next <td> which contains the hash (captured in group 1).
-	// Note: We use QuoteMeta to safely escape special characters in the map name.
+	// Taking out map hash using regex
+	// We use QuoteMeta to safely escape special characters in the map name.
 	pattern := fmt.Sprintf(`<td><a\s+href="[^"]*">%s</a></td>\s*<td>([a-f0-9]+)</td>`, regexp.QuoteMeta(mapName))
 
 	re := regexp.MustCompile(pattern)
@@ -146,13 +147,14 @@ func ProcessAndSyncRecords(store *Storage) error {
 	}
 
 	for _, rec := range records {
-		mapID, lastRecordID, err := store.GetMapState(rec.Map)
+		mapID, sourcejumpID, err := store.GetMapState(rec.Map)
 		if err != nil {
 			log.Printf("DB Error checking %s: %v", rec.Map, err)
 			continue
 		}
 
-		if mapID != -1 && lastRecordID == rec.ID {
+		// We already have the newest record saved
+		if mapID > 0 && sourcejumpID == rec.ID {
 			continue
 		}
 

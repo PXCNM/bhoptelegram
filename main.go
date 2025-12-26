@@ -13,8 +13,8 @@ import (
 
 /* TODOS:
  * 		Add support for momentum
+ * 		Find youtube videos from selected channels, parse some of tas videos from excel table
  * 		Notiffications on: new wr (all/map), new momentum map (all/mode), momentum map status changed (all/map/mode), new video (all)
- * 		Find youtube videos from selected channels
  */
 
 func main() {
@@ -23,7 +23,6 @@ func main() {
 		log.Println("No .env file found, relying on OS environment variables")
 	}
 
-	// 2. Get the token
 	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if botToken == "" {
 		log.Fatal("Error: TELEGRAM_BOT_TOKEN is not set")
@@ -58,11 +57,11 @@ func main() {
 	go startBackgroundTasks(storage)
 
 	b.Handle("/start", func(c tele.Context) error {
-		return c.Send("Hello! This a bhop record checker + movement map downloader. Type a map name to search.")
+		return c.Send("Hello! This a bhop record checker + movement map downloader. Type a map name to search.\nType /info for a github link")
 	})
 
 	b.Handle("/info", func(c tele.Context) error {
-		return c.Send("Bot Source Code: https://github.com/yourusername/bhopbot")
+		return c.Send("Bot Source Code: https://github.com/PXCNM/bhoptelegram")
 	})
 
 	b.Handle(tele.OnCallback, func(c tele.Context) error {
@@ -70,6 +69,7 @@ func main() {
 
 		m, wrServer, tasServer, err := storage.GetFullMapDetails(strings.TrimSpace(mapName))
 		if err != nil {
+			log.Println("Error during fetching map details: ", err)
 			return c.Send("Error fetching map details.")
 		}
 		if m == nil {
@@ -78,19 +78,21 @@ func main() {
 
 		m = ensureMapData(storage, m)
 
+		// Doing the same thing just to get server name... For new servers it did not show up
 		if m.Time != nil && wrServer == "" {
 			_, wrServer, _, _ = storage.GetFullMapDetails(m.Name)
 		}
 
 		msg := formatMapMessage(m, wrServer, tasServer)
 		c.Respond()
+
 		return c.Edit(msg, tele.ModeHTML)
 	})
 
 	b.Handle(tele.OnText, func(c tele.Context) error {
 		query := c.Text()
 
-		results, err := storage.SearchMaps(query)
+		results, err := storage.SearchMaps(query, 50)
 		if err != nil {
 			log.Println("Search error:", err)
 			return c.Send("An error occurred while searching.")
@@ -108,6 +110,7 @@ func main() {
 
 			m = ensureMapData(storage, m)
 
+			// The same thing as above...
 			if m.Time != nil && wrServer == "" {
 				_, wrServer, _, _ = storage.GetFullMapDetails(m.Name)
 			}
@@ -134,17 +137,17 @@ func main() {
 }
 
 func startBackgroundTasks(store *Storage) {
-	ticker10m := time.NewTicker(15 * time.Minute)
-	ticker1h := time.NewTicker(1 * time.Hour)
+	tickerSJ := time.NewTicker(30 * time.Minute)
+	tickerTASFastDL := time.NewTicker(6 * time.Hour)
 
 	for {
 		select {
-		case <-ticker10m.C:
+		case <-tickerSJ.C:
 			log.Println("Syncing Recent Records...")
 			if err := ProcessAndSyncRecords(store); err != nil {
 				log.Println("Error syncing records:", err)
 			}
-		case <-ticker1h.C:
+		case <-tickerTASFastDL.C:
 			log.Println("Syncing FastDL & TAS...")
 			if err := BulkSyncFastDL(store); err != nil {
 				log.Println("Error syncing FastDL:", err)
@@ -162,16 +165,15 @@ func ensureMapData(store *Storage, m *BhopMap) *BhopMap {
 	}
 
 	log.Printf("Lazy loading WR for map: %s", m.Name)
-	records, err := FetchMapWRs(m.Name)
-	if err != nil || len(records) == 0 {
+
+	wr, err := FetchMapWR(m.Name)
+	if err != nil {
 		log.Printf("Failed to lazy load WR for %s: %v", m.Name, err)
 		return m
 	}
 
-	wr := records[0]
-
-	if err := store.UpdateMapFromBackfill(wr); err != nil {
-		log.Printf("Failed to save lazy load data: %v", err)
+	if err := store.SaveMapWR(wr); err != nil {
+		log.Printf("Failed to save WR for %s: %v", m.Name, err)
 	}
 
 	val := wr.TimeSeconds
@@ -211,7 +213,7 @@ func formatMapMessage(m *BhopMap, wrServer string, tasServer string) string {
 	}
 
 	return fmt.Sprintf(
-		"<code>%s</code> (%s)\n\n"+
+		"<code>%s</code> (%s)\n"+
 			"WR: %s\n"+
 			"TAS: %s",
 		m.Name, dlLink, wrLine, tasLine,

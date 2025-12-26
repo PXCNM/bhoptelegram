@@ -14,39 +14,17 @@ type Server struct {
 }
 
 type BhopMap struct {
-	ID             int64
-	Name           string
-	Tier           *int
-	Time           *float64
-	Runner         *string
-	SourceJumpID   *int
-	TASTime        *float64
-	RunnerTAS      *string
-	ServerID       *int64
-	TasServerID    *int64
-	YouTubeLink    *string
-	YouTubeTASLink *string
-	FastDLHash     *string
-}
-
-type MomentumMode struct { // TODO: Rework the structure to work with momentum modes
-	ID   int64
-	Name string
-}
-
-type MomentumMap struct {
-	ID       int64
-	Name     string
-	Tier     int
-	ModeID   int64
-	IsRanked bool
-}
-
-type MomentumTime struct {
-	ID     int64
-	MapID  int64
-	Runner string
-	time   float64
+	ID           int64
+	Name         string
+	Tier         *int
+	Time         *float64
+	Runner       *string
+	SourceJumpID *int
+	TASTime      *float64
+	RunnerTAS    *string
+	ServerID     *int64
+	TasServerID  *int64
+	FastDLHash   *string
 }
 
 // SERVER RESPONSES
@@ -100,22 +78,6 @@ type RecordDetail struct {
 	Invalid  any
 	BadZones any
 	Points   int
-}
-
-// www.sourcejump.net/ajax/servers
-type ServerListEntry struct {
-	ID        int64
-	Country   string
-	Hostname  string
-	IP        string
-	Whitelist int
-}
-
-func (s ServerListEntry) toDBModel() Server {
-	return Server{
-		ID:   s.ID,
-		Name: s.Hostname,
-	}
 }
 
 func FormatSeconds(totalSeconds float64) string {
